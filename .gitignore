@@ -1,0 +1,5 @@
+*.o
+client_app
+server_app
+.vscode/
+.DS_Store
