@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+#include <unistd.h>
 
 #include "cli.h"
 #include "remote.h"
@@ -56,6 +58,23 @@ void cli_print_restore_result(const RestoreResult *result)
 
 int cli_run(int argc, char *argv[])
 {
+
+    if (argc == 2 && strcmp(argv[1], "status") == 0) {
+        printf("[SECURITY] 자동 백업 상태: %s\n",
+               access(".cybervault-paused", F_OK) == 0
+               ? "중단" : "활성");
+        return 0;
+    }
+
+    if (argc == 2 && strcmp(argv[1], "resume") == 0) {
+        if (unlink(".cybervault-paused") != 0 &&
+            errno != ENOENT)
+            return -1;
+
+        printf("[SECURITY] 자동 백업 재개 요청 완료\n");
+        return 0;
+    }
+
     if (argc == 3 && strcmp(argv[1], "keygen") == 0)
         return key_generate(argv[2]);
 
@@ -103,6 +122,8 @@ int cli_run(int argc, char *argv[])
     }
 
     printf("사용법:\n");
+    printf("  ./client_app status\n");
+    printf("  ./client_app resume\n");
     printf("  ./client_app keygen <keyfile>\n");
     printf("  ./client_app backup <file>\n");
     printf("  ./client_app list [filename]\n");

@@ -1,6 +1,10 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "remote.h"
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdint.h>
+#include <fcntl.h>
 #include <sys/inotify.h>
 #include <sys/stat.h>
 #include <strings.h>
@@ -49,12 +53,96 @@ static int suspicious_file(const char *path)
 }
 
 // 작업 큐 소비 및 자동 원격 백업
+
+#define TRACK_LIMIT 1024
+#define CHANGE_LIMIT 10
+#define CHANGE_WINDOW 5
+#define PAUSE_FILE ".cybervault-paused"
+
+typedef struct {
+    char path[4096];
+    off_t size;
+} FileRecord;
+
+static FileRecord records[TRACK_LIMIT];
+static size_t record_count = 0;
+
+static int abnormal_size(const char *path, off_t size)
+{
+    for (size_t i = 0; i < record_count; i++) {
+        if (strcmp(records[i].path, path) != 0)
+            continue;
+
+        off_t old = records[i].size;
+        records[i].size = size;
+
+        if (old >= 4096 &&
+            (size <= old / 4 ||
+             (long double)size >= (long double)old * 4))
+            return 1;
+
+        return 0;
+    }
+
+    if (record_count < TRACK_LIMIT &&
+        strlen(path) < sizeof(records[0].path)) {
+
+        strcpy(records[record_count].path, path);
+        records[record_count].size = size;
+        record_count++;
+    }
+
+    return 0;
+}
+
+static int abnormal_rate(void)
+{
+    static time_t changes[CHANGE_LIMIT];
+    static size_t count = 0;
+    static size_t next = 0;
+
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+        return 0;
+
+    changes[next] = ts.tv_sec;
+    next = (next + 1) % CHANGE_LIMIT;
+
+    if (count < CHANGE_LIMIT)
+        count++;
+
+    return count == CHANGE_LIMIT &&
+           ts.tv_sec - changes[next] <= CHANGE_WINDOW;
+}
+
+static void pause_backup(const char *reason,
+                         const char *path)
+{
+    int fd = open(PAUSE_FILE,
+                  O_WRONLY | O_CREAT | O_NOFOLLOW,
+                  0600);
+
+    if (fd >= 0) {
+        fsync(fd);
+        close(fd);
+    }
+
+    fprintf(stderr,
+            "[SECURITY] %s: %s\n", reason, path);
+
+    fprintf(stderr,
+            "[SECURITY] 자동 백업 중단\n");
+
+    logger_log("WARN", "%s: %s", reason, path);
+}
+
 static void *worker_thread(void *arg)
 {
     WorkQueue *queue = (WorkQueue *)arg;
     WorkItem item;
 
-    int backup_paused = 0;
+    int backup_paused = access(PAUSE_FILE, F_OK) == 0;
 
     while (queue_pop(queue, &item) == 0) {
 
@@ -67,20 +155,18 @@ static void *worker_thread(void *arg)
             continue;
         }
 
+
+        if (backup_paused &&
+            access(PAUSE_FILE, F_OK) != 0) {
+
+            backup_paused = 0;
+            logger_log("INFO", "자동 백업 재개");
+        }
+
         if (suspicious_file(item.filename)) {
-
             backup_paused = 1;
-
-            fprintf(stderr,
-                    "[SECURITY] 의심 파일 감지: %s\n",
-                    item.filename);
-
-            fprintf(stderr,
-                    "[SECURITY] 자동 백업 중단\n");
-
-            logger_log("WARN",
-                       "의심 파일 감지 및 백업 중단: %s",
-                       item.filename);
+            pause_backup("의심 확장자 감지",
+                         item.filename);
             continue;
         }
 
@@ -101,6 +187,20 @@ static void *worker_thread(void *arg)
         if (lstat(item.filename, &st) != 0 ||
             !S_ISREG(st.st_mode))
             continue;
+
+        if (abnormal_size(item.filename, st.st_size)) {
+            backup_paused = 1;
+            pause_backup("파일 크기 급변 감지",
+                         item.filename);
+            continue;
+        }
+
+        if (abnormal_rate()) {
+            backup_paused = 1;
+            pause_backup("대량 파일 변경 감지",
+                         item.filename);
+            continue;
+        }
 
         printf("[WORKER] 자동 백업 시작: %s\n",
                item.filename);
@@ -140,6 +240,9 @@ int run_monitor(const char *directory)
     int worker_created = 0;
     int queue_initialized = 0;
     int result = -1;
+
+    if (mkdir("logs", 0700) != 0 && errno != EEXIST)
+        return -1;
 
     // 로그 파일 초기화
     if (logger_init("logs/cybervault.log") != 0) {
