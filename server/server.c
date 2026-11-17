@@ -57,6 +57,24 @@ int is_valid_filename(const char *name) {
     return 1;
 }
 
+
+static int authenticate(const BackupHeader *header)
+{
+    const char *expected = getenv("CYBERVAULT_TOKEN");
+
+    if (!expected || strlen(expected) != 64 ||
+        header->token[64] != '\0')
+        return 0;
+
+    unsigned int diff = 0;
+
+    for (size_t i = 0; i < 64; i++)
+        diff |= (unsigned char)expected[i] ^
+                (unsigned char)header->token[i];
+
+    return diff == 0;
+}
+
 int validate_header(const BackupHeader *header) {
     if (header->command < CMD_BACKUP || header->command > CMD_ERROR) {
         return 0;
@@ -324,6 +342,13 @@ void *client_worker(void *arg) {
         return NULL;
     }
 
+    if (!authenticate(&header)) {
+        fprintf(stderr, "[AUTH] 인증 실패\\n");
+        send_error(client_sock, 7);
+        close(client_sock);
+        return NULL;
+    }
+
     if (!validate_header(&header)) {
         printf("헤더 검증 실패: command=%u, filename=%.255s\n", header.command, header.filename);
         send_error(client_sock, 1);
@@ -346,6 +371,14 @@ void *client_worker(void *arg) {
 }
 
 int main(void) {
+    const char *token = getenv("CYBERVAULT_TOKEN");
+
+    if (!token || strlen(token) != 64 ||
+        strspn(token, "0123456789abcdef") != 64) {
+        fprintf(stderr, "[AUTH] 서버 인증 토큰 설정 필요\n");
+        return 1;
+    }
+
     mkdir("backup_storage", 0755);
 
     int server_sock = socket(AF_INET, SOCK_STREAM, 0);

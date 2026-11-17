@@ -23,6 +23,21 @@
 #define MAX_PACKAGE (1024ULL * 1024ULL * 1024ULL)
 
 // 외부 키 파일에서 AES-256 키 읽기
+
+static int set_auth_token(BackupHeader *header)
+{
+    const char *token = getenv("CYBERVAULT_TOKEN");
+
+    if (!token || strlen(token) != 64 ||
+        strspn(token, "0123456789abcdef") != 64) {
+        fprintf(stderr, "[AUTH] 인증 토큰 설정 오류\n");
+        return -1;
+    }
+
+    memcpy(header->token, token, 65);
+    return 0;
+}
+
 static int connect_server(void)
 {
     const char *ip = getenv("CYBERVAULT_SERVER");
@@ -151,7 +166,8 @@ int remote_backup(const char *path)
     h.command = CMD_BACKUP;
     h.file_size = (uint64_t)st.st_size + 64;
 
-    if (send_bytes(fd, &h, sizeof(h)) != 0 ||
+    if (set_auth_token(&h) != 0 ||
+        send_bytes(fd, &h, sizeof(h)) != 0 ||
         send_bytes(fd, hash, 64) != 0)
         goto cleanup;
 
@@ -208,7 +224,8 @@ int remote_list(const char *filename)
 
     int result = -1;
 
-    if (send_bytes(fd, &h, sizeof(h)) != 0 ||
+    if (set_auth_token(&h) != 0 ||
+        send_bytes(fd, &h, sizeof(h)) != 0 ||
         recv_bytes(fd, &response, sizeof(response)) != 0 ||
         response.command != CMD_LIST_RES ||
         response.status != 0 ||
@@ -268,7 +285,8 @@ int remote_restore(const char *filename,
     h.command = CMD_RESTORE;
     h.version = version;
 
-    if (send_bytes(fd, &h, sizeof(h)) != 0 ||
+    if (set_auth_token(&h) != 0 ||
+        send_bytes(fd, &h, sizeof(h)) != 0 ||
         recv_bytes(fd, &response, sizeof(response)) != 0 ||
         response.command != CMD_RESTORE_DATA ||
         response.status != 0 ||

@@ -20,6 +20,7 @@ typedef struct {
     char filename[256];
     uint64_t file_size;
     uint32_t version;
+    char token[65];
 } BackupHeader;
 #pragma pack(pop)
 
