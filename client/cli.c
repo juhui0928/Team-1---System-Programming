@@ -1,5 +1,9 @@
 
 #include "cli.h"
+#include "remote.h"
+#include <stdlib.h>
+#include <stdint.h>
+#include <errno.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -48,58 +52,57 @@ void cli_print_restore_result(const RestoreResult *result)
 }
 
 // CLI 명령어 처리
+
 int cli_run(int argc, char *argv[])
 {
-    if (argc < 2) {
-        printf("사용법:\n");
-        printf("  ./client_app list\n");
-        printf("  ./client_app restore <filename>\n");
-        return -1;
+    if (argc == 3 && strcmp(argv[1], "backup") == 0)
+        return remote_backup(argv[2]);
+
+    if (strcmp(argc > 1 ? argv[1] : "", "list") == 0) {
+        if (argc == 2)
+            return remote_list(NULL);
+        if (argc == 3)
+            return remote_list(argv[2]);
     }
 
-    // 백업 파일 목록 조회
-    if (strcmp(argv[1], "list") == 0) {
-        if (argc != 2) {
-            printf("사용법: ./client_app list\n");
-            return -1;
+    if (argc >= 3 && argc <= 5 &&
+        strcmp(argv[1], "restore") == 0) {
+
+        char output[512];
+        unsigned int version = 0;
+
+        if (argc >= 4) {
+            if (strlen(argv[3]) >= sizeof(output))
+                return -1;
+            strcpy(output, argv[3]);
+        } else {
+            int n = snprintf(output, sizeof(output),
+                             "%s.restored", argv[2]);
+
+            if (n < 0 || (size_t)n >= sizeof(output))
+                return -1;
         }
 
-        printf("[CLI] 백업 파일 목록 조회 요청\n");
-        printf("[CLI] 서버 통신 기능은 아직 연결되지 않았습니다.\n");
-    }
+        if (argc == 5) {
+            char *end;
+            errno = 0;
+            unsigned long v = strtoul(argv[4], &end, 10);
 
-    // 파일 복구
-    else if (strcmp(argv[1], "restore") == 0) {
-        if (argc != 3) {
-            printf("사용법: ./client_app restore <filename>\n");
-            return -1;
+            if (errno || end == argv[4] || *end ||
+                argv[4][0] == '-' || v > UINT32_MAX)
+                return -1;
+
+            version = (unsigned int)v;
         }
 
-        printf("[CLI] 파일 복구 요청: %s\n", argv[2]);
-
-        /*
-         * 현재 서버 통신 및 실제 복구 기능이 연결되지 않았으므로
-         * 복구와 해시 검증은 수행하지 않은 상태로 표시한다.
-         *
-         * 추후 서버에서 전달받은 실제 결과값으로 변경하면 된다.
-         */
-        RestoreResult result = {
-            .restore_status = RESTORE_NOT_EXECUTED,
-            .hash_status = HASH_NOT_CHECKED
-        };
-
-        cli_print_restore_result(&result);
-
-        printf("[CLI] 서버 통신 기능은 아직 연결되지 않았습니다.\n");
+        return remote_restore(argv[2], output, version);
     }
 
-    // 잘못된 명령어
-    else {
-        printf("알 수 없는 명령어입니다: %s\n", argv[1]);
-        printf("사용 가능한 명령어: list, restore\n");
-        return -1;
-    }
+    printf("사용법:\n");
+    printf("  ./client_app backup <file>\n");
+    printf("  ./client_app list [filename]\n");
+    printf("  ./client_app restore <filename> [output] [version]\n");
+    printf("  ./client_app monitor <directory>\n");
 
-    return 0;
+    return -1;
 }
-

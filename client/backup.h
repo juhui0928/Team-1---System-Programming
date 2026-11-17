@@ -23,4 +23,13 @@ int restore_backup(
     const unsigned char key[AES_KEY_SIZE]
 );
 
+
+// 백업 완료 후 암호화 파일 경로까지 반환
+int backup_file_ex(
+    const char *source_path,
+    const unsigned char key[AES_KEY_SIZE],
+    char output_hash[SHA256_HEX_LENGTH],
+    char *output_path,
+    size_t output_path_size);
+
 #endif

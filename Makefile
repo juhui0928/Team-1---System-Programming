@@ -2,13 +2,27 @@ CC = gcc
 CFLAGS = -Wall -g -std=c11 -I./common
 LDFLAGS = -pthread
 
+CLIENT_SRC = client/main.c \
+             client/cli.c \
+             client/monitor.c \
+             client/integrity.c \
+             client/encryption.c \
+             client/recovery.c \
+             client/remote.c client/backup.c \
+             common/queue.c \
+             common/logger.c
+
+SERVER_SRC = server/server.c
+
+.PHONY: all clean
+
 all: client_app server_app
 
-client_app: client/main.c client/cli.c client/monitor.c common/queue.c common/logger.c
-	$(CC) $(CFLAGS) client/main.c client/cli.c client/monitor.c common/queue.c common/logger.c -o client_app $(LDFLAGS)
+client_app: $(CLIENT_SRC)
+	$(CC) $(CFLAGS) $(CLIENT_SRC) -o client_app $(LDFLAGS) -lcrypto
 
-server_app: server/server.c
-	$(CC) $(CFLAGS) server/server.c -o server_app $(LDFLAGS)
+server_app: $(SERVER_SRC)
+	$(CC) $(CFLAGS) $(SERVER_SRC) -o server_app $(LDFLAGS)
 
 clean:
 	rm -f client_app server_app

@@ -20,13 +20,18 @@ static int valid_hash(const char *hash)
 }
 
 // 암호화 백업 및 버전 관리
-int backup_file(
+int backup_file_ex(
     const char *source_path,
     const unsigned char key[AES_KEY_SIZE],
-    char output_hash[SHA256_HEX_LENGTH])
+    char output_hash[SHA256_HEX_LENGTH],
+    char *output_path,
+    size_t output_path_size)
 {
-    if (!source_path || !key || !output_hash)
+    if (!source_path || !key || !output_hash ||
+        !output_path || output_path_size == 0)
         return -1;
+
+    output_path[0] = '\0';
 
     struct stat st;
 
@@ -124,6 +129,12 @@ int backup_file(
     if (failed)
         goto cleanup;
 
+    if (strlen(encrypted_path) >= output_path_size)
+        goto cleanup;
+
+    memcpy(output_path, encrypted_path,
+           strlen(encrypted_path) + 1);
+
     printf("[BACKUP] 백업 완료: %s\n", encrypted_path);
     printf("[BACKUP] SHA-256: %s\n", output_hash);
 
@@ -201,4 +212,18 @@ int restore_backup(
         key,
         expected_hash
     );
+}
+
+
+// 기존 백업 함수와의 호환성 유지
+int backup_file(
+    const char *source_path,
+    const unsigned char key[AES_KEY_SIZE],
+    char output_hash[SHA256_HEX_LENGTH])
+{
+    char path[1024];
+
+    return backup_file_ex(
+        source_path, key, output_hash,
+        path, sizeof(path));
 }

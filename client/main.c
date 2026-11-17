@@ -1,3 +1,10 @@
+#define _POSIX_C_SOURCE 200809L
+
+#include "remote.h"
+#include <sys/inotify.h>
+#include <sys/stat.h>
+#include <strings.h>
+#include <string.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -13,26 +20,108 @@
 #include "../common/logger.h"
 
 // 작업 큐에서 파일 이벤트를 가져오는 스레드
-void *worker_thread(void *arg)
+
+// 의심스러운 파일 확장자 검사
+static int suspicious_file(const char *path)
+{
+    const char *ext = strrchr(path, '.');
+
+    if (!ext)
+        return 0;
+
+    const char *blocked[] = {
+        ".locked",
+        ".encrypted",
+        ".crypt",
+        ".lockbit",
+        ".wannacry",
+        ".ransomware"
+    };
+
+    for (size_t i = 0;
+         i < sizeof(blocked) / sizeof(blocked[0]);
+         i++) {
+        if (strcasecmp(ext, blocked[i]) == 0)
+            return 1;
+    }
+
+    return 0;
+}
+
+// 작업 큐 소비 및 자동 원격 백업
+static void *worker_thread(void *arg)
 {
     WorkQueue *queue = (WorkQueue *)arg;
     WorkItem item;
 
+    int backup_paused = 0;
+
     while (queue_pop(queue, &item) == 0) {
 
-        printf("[WORKER] 파일 이벤트 처리: %s (event: 0x%x)\n",
-               item.filename, item.event_mask);
+        if (item.event_mask &
+            (IN_DELETE | IN_MOVED_FROM)) {
 
-        logger_log("INFO",
-                   "파일 이벤트 처리: %s (event: 0x%x)",
-                   item.filename, item.event_mask);
+            logger_log("INFO",
+                       "기존 서버 백업 유지: %s",
+                       item.filename);
+            continue;
+        }
+
+        if (suspicious_file(item.filename)) {
+
+            backup_paused = 1;
+
+            fprintf(stderr,
+                    "[SECURITY] 의심 파일 감지: %s\n",
+                    item.filename);
+
+            fprintf(stderr,
+                    "[SECURITY] 자동 백업 중단\n");
+
+            logger_log("WARN",
+                       "의심 파일 감지 및 백업 중단: %s",
+                       item.filename);
+            continue;
+        }
+
+        // 파일 쓰기가 완료된 경우에만 백업
+        if (!(item.event_mask &
+              (IN_CLOSE_WRITE | IN_MOVED_TO)))
+            continue;
+
+        if (backup_paused) {
+            logger_log("WARN",
+                       "보안 정책으로 백업 차단: %s",
+                       item.filename);
+            continue;
+        }
+
+        struct stat st;
+
+        if (lstat(item.filename, &st) != 0 ||
+            !S_ISREG(st.st_mode))
+            continue;
+
+        printf("[WORKER] 자동 백업 시작: %s\n",
+               item.filename);
+
+        if (remote_backup(item.filename) == 0) {
+
+            logger_log("INFO",
+                       "자동 원격 백업 성공: %s",
+                       item.filename);
+
+        } else {
+
+            logger_log("ERROR",
+                       "자동 원격 백업 실패: %s",
+                       item.filename);
+        }
     }
-
-    printf("[WORKER] 작업 스레드 종료\n");
-    logger_log("INFO", "작업 스레드 종료");
 
     return NULL;
 }
+
 
 // 파일 모니터링 실행
 int run_monitor(const char *directory)
