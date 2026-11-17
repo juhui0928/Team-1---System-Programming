@@ -39,6 +39,12 @@ int backup_file_ex(
         !S_ISREG(st.st_mode))
         return -1;
 
+    struct stat before, after;
+
+    if (lstat(source_path, &before) != 0 ||
+        !S_ISREG(before.st_mode))
+        return -1;
+
     if (mkdir(BACKUP_DIR, 0700) != 0 &&
         errno != EEXIST)
         return -1;
@@ -46,7 +52,7 @@ int backup_file_ex(
     const char *filename = strrchr(source_path, '/');
     filename = filename ? filename + 1 : source_path;
 
-    if (!*filename)
+    if (!*filename || strlen(filename) > 240)
         return -1;
 
     char timestamp[32];
@@ -106,6 +112,18 @@ int backup_file_ex(
 
     if (strcmp(output_hash, verified_hash) != 0)
         goto cleanup;
+
+    if (lstat(source_path, &after) != 0 ||
+        before.st_dev != after.st_dev ||
+        before.st_ino != after.st_ino ||
+        before.st_size != after.st_size ||
+        before.st_mtim.tv_sec != after.st_mtim.tv_sec ||
+        before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+        before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
+        before.st_ctim.tv_nsec != after.st_ctim.tv_nsec) {
+        fprintf(stderr, "[BACKUP] 원본 파일 변경 감지\n");
+        goto cleanup;
+    }
 
     unlink(verify_path);
 

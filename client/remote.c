@@ -247,12 +247,16 @@ int remote_restore(const char *filename,
     char temp_dir[] = "/tmp/cybervault-XXXXXX";
     char encrypted[256];
 
-    if (key_load(key) != 0 ||
-        set_filename(&h, filename) != 0)
+    if (set_filename(&h, filename) != 0 ||
+        key_load(key) != 0) {
+        OPENSSL_cleanse(key, sizeof(key));
         return -1;
+    }
 
-    if (!mkdtemp(temp_dir))
+    if (!mkdtemp(temp_dir)) {
+        OPENSSL_cleanse(key, sizeof(key));
         return -1;
+    }
 
     snprintf(encrypted, sizeof(encrypted),
              "%s/payload.enc", temp_dir);

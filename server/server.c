@@ -6,6 +6,8 @@
 #include <errno.h>
 #include <dirent.h>
 #include <pthread.h>
+#include <fcntl.h>
+#include <sys/time.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -22,7 +24,7 @@ int send_all(int sock, const void *buf, size_t len) {
     const char *ptr = (const char *)buf;
     size_t total = 0;
     while (total < len) {
-        ssize_t n = send(sock, ptr + total, len - total, 0);
+        ssize_t n = send(sock, ptr + total, len - total, MSG_NOSIGNAL);
         if (n <= 0) {
             if (n < 0 && errno == EINTR) continue;
             return -1;
@@ -49,6 +51,7 @@ int recv_all(int sock, void *buf, size_t len) {
 int is_valid_filename(const char *name) {
     size_t len = strnlen(name, 256);
     if (len == 0 || len >= 256) return 0;
+    if (strcmp(name, ".") == 0) return 0;
     if (strstr(name, "..") != NULL) return 0;
     if (strchr(name, '/') != NULL || strchr(name, '\\') != NULL) return 0;
     return 1;
@@ -108,14 +111,31 @@ void handle_backup(int client_sock, BackupHeader *header) {
     snprintf(dir_path, sizeof(dir_path), "backup_storage/%s", header->filename);
 
     pthread_mutex_lock(&storage_mutex);
-    mkdir(dir_path, 0755);
-    uint32_t ver = get_next_version(dir_path);
-    snprintf(tmp_path, sizeof(tmp_path), "%s/version_%03u.tmp", dir_path, ver);
-    snprintf(final_path, sizeof(final_path), "%s/version_%03u", dir_path, ver);
-    FILE *fp = fopen(tmp_path, "wb");
+
+    if (mkdir(dir_path, 0700) != 0 && errno != EEXIST) {
+        pthread_mutex_unlock(&storage_mutex);
+        send_error(client_sock, 2);
+        return;
+    }
+
     pthread_mutex_unlock(&storage_mutex);
 
+    // 연결마다 독립적인 임시 파일 사용
+    snprintf(tmp_path, sizeof(tmp_path),
+             "%s/.upload_XXXXXX", dir_path);
+
+    int temp_fd = mkstemp(tmp_path);
+
+    if (temp_fd < 0) {
+        send_error(client_sock, 2);
+        return;
+    }
+
+    FILE *fp = fdopen(temp_fd, "wb");
+
     if (!fp) {
+        close(temp_fd);
+        unlink(tmp_path);
         send_error(client_sock, 2);
         return;
     }
@@ -142,17 +162,47 @@ void handle_backup(int client_sock, BackupHeader *header) {
         return;
     }
 
-    fflush(fp);
-    if (fsync(fileno(fp)) < 0) {
-        fclose(fp);
+    int saved = fflush(fp) == 0;
+
+    if (saved && fsync(fileno(fp)) != 0)
+        saved = 0;
+
+    if (fclose(fp) != 0)
+        saved = 0;
+
+    if (!saved) {
         unlink(tmp_path);
         send_error(client_sock, 3);
         return;
     }
-    fclose(fp);
 
-    if (rename(tmp_path, final_path) < 0) {
-        unlink(tmp_path);
+    // 전송 완료 후 버전 번호 결정
+    pthread_mutex_lock(&storage_mutex);
+
+    uint32_t ver = get_next_version(dir_path);
+
+    snprintf(final_path, sizeof(final_path),
+             "%s/version_%03u", dir_path, ver);
+
+    int published = ver != 0 &&
+                    link(tmp_path, final_path) == 0;
+
+    unlink(tmp_path);
+
+    int durable = 0;
+
+    if (published) {
+        int dir_fd = open(dir_path, O_RDONLY | O_DIRECTORY);
+
+        if (dir_fd >= 0) {
+            durable = fsync(dir_fd) == 0;
+            close(dir_fd);
+        }
+    }
+
+    pthread_mutex_unlock(&storage_mutex);
+
+    if (!published || !durable) {
         send_error(client_sock, 4);
         return;
     }
@@ -261,6 +311,13 @@ void *client_worker(void *arg) {
     int client_sock = *(int *)arg;
     free(arg);
 
+    struct timeval timeout = {30, 0};
+
+    setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO,
+               &timeout, sizeof(timeout));
+    setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO,
+               &timeout, sizeof(timeout));
+
     BackupHeader header;
     if (recv_all(client_sock, &header, sizeof(header)) < 0) {
         close(client_sock);
@@ -268,7 +325,7 @@ void *client_worker(void *arg) {
     }
 
     if (!validate_header(&header)) {
-        printf("헤더 검증 실패: command=%u, filename=%s\n", header.command, header.filename);
+        printf("헤더 검증 실패: command=%u, filename=%.255s\n", header.command, header.filename);
         send_error(client_sock, 1);
         close(client_sock);
         return NULL;
