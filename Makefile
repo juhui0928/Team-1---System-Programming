@@ -8,7 +8,7 @@ CLIENT_SRC = client/main.c \
              client/integrity.c \
              client/encryption.c \
              client/recovery.c \
-             client/remote.c client/backup.c \
+             client/key.c client/remote.c client/backup.c \
              common/queue.c \
              common/logger.c
 

@@ -1,6 +1,7 @@
 
 #include "cli.h"
 #include "remote.h"
+#include "key.h"
 #include <stdlib.h>
 #include <stdint.h>
 #include <errno.h>
@@ -55,6 +56,9 @@ void cli_print_restore_result(const RestoreResult *result)
 
 int cli_run(int argc, char *argv[])
 {
+    if (argc == 3 && strcmp(argv[1], "keygen") == 0)
+        return key_generate(argv[2]);
+
     if (argc == 3 && strcmp(argv[1], "backup") == 0)
         return remote_backup(argv[2]);
 
@@ -99,6 +103,7 @@ int cli_run(int argc, char *argv[])
     }
 
     printf("사용법:\n");
+    printf("  ./client_app keygen <keyfile>\n");
     printf("  ./client_app backup <file>\n");
     printf("  ./client_app list [filename]\n");
     printf("  ./client_app restore <filename> [output] [version]\n");

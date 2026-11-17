@@ -1,6 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "remote.h"
+#include "key.h"
+#include <openssl/crypto.h>
 #include "backup.h"
 #include "recovery.h"
 #include "../common/protocol.h"
@@ -21,27 +23,6 @@
 #define MAX_PACKAGE (1024ULL * 1024ULL * 1024ULL)
 
 // 외부 키 파일에서 AES-256 키 읽기
-static int load_key(unsigned char key[AES_KEY_SIZE])
-{
-    const char *path = getenv("CYBERVAULT_KEY_FILE");
-
-    if (!path) {
-        fprintf(stderr, "[ERROR] 키 파일 환경변수 미설정\n");
-        return -1;
-    }
-
-    FILE *fp = fopen(path, "rb");
-    if (!fp)
-        return -1;
-
-    int ok = fread(key, 1, AES_KEY_SIZE, fp) == AES_KEY_SIZE
-             && fgetc(fp) == EOF && !ferror(fp);
-
-    fclose(fp);
-    return ok ? 0 : -1;
-}
-
-// 서버 연결
 static int connect_server(void)
 {
     const char *ip = getenv("CYBERVAULT_SERVER");
@@ -145,7 +126,7 @@ int remote_backup(const char *path)
     name = name ? name + 1 : path;
 
     if (set_filename(&h, name) != 0 ||
-        load_key(key) != 0)
+        key_load(key) != 0)
         goto cleanup;
 
     if (backup_file_ex(path, key, hash,
@@ -198,6 +179,7 @@ int remote_backup(const char *path)
     result = 0;
 
 cleanup:
+    OPENSSL_cleanse(key, sizeof(key));
     if (fp)
         fclose(fp);
     if (fd >= 0)
@@ -265,7 +247,7 @@ int remote_restore(const char *filename,
     char temp_dir[] = "/tmp/cybervault-XXXXXX";
     char encrypted[256];
 
-    if (load_key(key) != 0 ||
+    if (key_load(key) != 0 ||
         set_filename(&h, filename) != 0)
         return -1;
 
@@ -333,6 +315,7 @@ int remote_restore(const char *filename,
     result = 0;
 
 cleanup:
+    OPENSSL_cleanse(key, sizeof(key));
     if (fp)
         fclose(fp);
     if (fd >= 0)
