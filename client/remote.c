@@ -3,6 +3,7 @@
 #include "remote.h"
 #include "key.h"
 #include <openssl/crypto.h>
+#include <openssl/rand.h>
 #include "backup.h"
 #include "recovery.h"
 #include "../common/protocol.h"
@@ -159,40 +160,130 @@ int remote_backup(const char *path)
     if (!fp)
         goto cleanup;
 
-    fd = connect_server();
-    if (fd < 0)
+
+    unsigned char upload_random[16];
+
+    if (RAND_bytes(upload_random, sizeof(upload_random)) != 1)
         goto cleanup;
+
+    for (size_t i = 0; i < sizeof(upload_random); i++)
+        snprintf(h.upload_id + i * 2, 3,
+                 "%02x", (unsigned int)upload_random[i]);
 
     h.command = CMD_BACKUP;
     h.file_size = (uint64_t)st.st_size + 64;
 
-    if (set_auth_token(&h) != 0 ||
-        send_bytes(fd, &h, sizeof(h)) != 0 ||
-        send_bytes(fd, hash, 64) != 0)
+    if (set_auth_token(&h) != 0)
         goto cleanup;
 
-    size_t n;
-    uint64_t sent = 0;
+    int test_disconnected = 0;
 
-    while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) {
-        if (send_bytes(fd, buf, n) != 0)
+    // 최초 연결 + 최대 9회 재연결
+    for (int attempt = 0; attempt < 10; attempt++) {
+
+        if (attempt > 0) {
+            printf("[RESUME] 재연결 시도: %d\n", attempt);
+            sleep(2);
+        }
+
+        fd = connect_server();
+
+        if (fd < 0)
+            continue;
+
+        memset(&response, 0, sizeof(response));
+
+        if (send_bytes(fd, &h, sizeof(h)) != 0 ||
+            recv_bytes(fd, &response, sizeof(response)) != 0)
+            goto retry;
+
+        if (response.command == CMD_ERROR) {
+            if (response.status == 7)
+                goto cleanup;
+            goto retry;
+        }
+
+        // 이미 완료된 업로드의 ACK 재수신
+        if (response.command == CMD_BACKUP_ACK &&
+            response.status == 0 &&
+            response.file_size == h.file_size &&
+            response.version != 0)
+            goto success;
+
+        if (response.command != CMD_BACKUP_OFFSET ||
+            response.status != 0 ||
+            response.offset > h.file_size)
+            goto retry;
+
+        uint64_t offset = response.offset;
+
+        printf("[RESUME] 서버 저장 위치: %llu / %llu bytes\n",
+               (unsigned long long)offset,
+               (unsigned long long)h.file_size);
+
+        if (offset < 64) {
+            if (send_bytes(fd, hash + offset,
+                           64 - (size_t)offset) != 0)
+                goto retry;
+
+            offset = 64;
+        }
+
+        clearerr(fp);
+
+        if (fseeko(fp, (off_t)(offset - 64), SEEK_SET) != 0)
             goto cleanup;
-        sent += n;
+
+        while (offset < h.file_size) {
+            uint64_t remaining = h.file_size - offset;
+
+            size_t chunk = remaining > sizeof(buf)
+                         ? sizeof(buf) : (size_t)remaining;
+
+            size_t n = fread(buf, 1, chunk, fp);
+
+            if (n != chunk)
+                goto cleanup;
+
+            if (send_bytes(fd, buf, n) != 0)
+                goto retry;
+
+            offset += n;
+
+            // 시연 및 테스트용 강제 연결 단절
+            if (!test_disconnected &&
+                getenv("CYBERVAULT_TEST_DISCONNECT") &&
+                offset >= 65536 &&
+                offset < h.file_size) {
+
+                test_disconnected = 1;
+
+                printf("[TEST] 전송 중 강제 연결 단절\n");
+
+                shutdown(fd, SHUT_RDWR);
+                goto retry;
+            }
+        }
+
+        if (recv_bytes(fd, &response, sizeof(response)) != 0 ||
+            response.command != CMD_BACKUP_ACK ||
+            response.status != 0 ||
+            response.file_size != h.file_size ||
+            response.version == 0)
+            goto retry;
+
+success:
+        printf("[REMOTE] 원격 백업 성공: %s\n", name);
+        printf("[REMOTE] 서버 버전: %u\n", response.version);
+
+        result = 0;
+        goto cleanup;
+
+retry:
+        close(fd);
+        fd = -1;
     }
 
-    if (ferror(fp) || sent != (uint64_t)st.st_size)
-        goto cleanup;
-
-    if (recv_bytes(fd, &response, sizeof(response)) != 0 ||
-        response.command != CMD_BACKUP_ACK ||
-        response.status != 0 ||
-        response.file_size != h.file_size)
-        goto cleanup;
-
-    printf("[REMOTE] 원격 백업 성공: %s\n", name);
-    printf("[REMOTE] 서버 버전: %u\n", response.version);
-
-    result = 0;
 
 cleanup:
     OPENSSL_cleanse(key, sizeof(key));

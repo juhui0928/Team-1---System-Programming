@@ -10,7 +10,8 @@ typedef enum {
     CMD_LIST_RES,
     CMD_RESTORE,
     CMD_RESTORE_DATA,
-    CMD_ERROR
+    CMD_ERROR,
+    CMD_BACKUP_OFFSET
 } CommandType;
 
 #pragma pack(push, 1)
@@ -21,6 +22,8 @@ typedef struct {
     uint64_t file_size;
     uint32_t version;
     char token[65];
+    char upload_id[33];
+    uint64_t offset;
 } BackupHeader;
 #pragma pack(pop)
 
