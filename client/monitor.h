@@ -3,16 +3,16 @@
 #define MONITOR_H
 
 #include "../common/queue.h"
-#include <signal.h>
+#include <stdatomic.h>
 
-// 파일 감시에 필요한 정보
 typedef struct {
     const char *directory;
     WorkQueue *queue;
-    volatile sig_atomic_t *stop;
+    atomic_int *stop;
+    atomic_int *status;
 } MonitorArgs;
 
-// 파일 감시 스레드
 void *monitor_thread(void *arg);
 
 #endif
+
