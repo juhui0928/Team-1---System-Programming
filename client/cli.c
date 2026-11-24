@@ -1,12 +1,55 @@
+
 #include "cli.h"
 
 #include <stdio.h>
 #include <string.h>
 
+// 복구 및 해시 검증 결과 출력
+void cli_print_restore_result(const RestoreResult *result)
+{
+    if (result == NULL) {
+        printf("[ERROR] 복구 결과가 없습니다.\n");
+        return;
+    }
+
+    printf("\n========== 복구 결과 ==========\n");
+
+    switch (result->restore_status) {
+    case RESTORE_SUCCESS:
+        printf("[RESTORE] 파일 복구 성공\n");
+        break;
+
+    case RESTORE_FAILED:
+        printf("[RESTORE] 파일 복구 실패\n");
+        break;
+
+    case RESTORE_NOT_EXECUTED:
+    default:
+        printf("[RESTORE] 복구가 실행되지 않았습니다.\n");
+        break;
+    }
+
+    switch (result->hash_status) {
+    case HASH_VALID:
+        printf("[HASH] SHA-256 검증 성공\n");
+        break;
+
+    case HASH_INVALID:
+        printf("[HASH] SHA-256 검증 실패\n");
+        break;
+
+    case HASH_NOT_CHECKED:
+    default:
+        printf("[HASH] SHA-256 검증이 수행되지 않았습니다.\n");
+        break;
+    }
+
+    printf("===============================\n");
+}
+
 // CLI 명령어 처리
 int cli_run(int argc, char *argv[])
 {
-    // 명령어가 입력되지 않은 경우
     if (argc < 2) {
         printf("사용법:\n");
         printf("  ./client_app list\n");
@@ -22,7 +65,7 @@ int cli_run(int argc, char *argv[])
         }
 
         printf("[CLI] 백업 파일 목록 조회 요청\n");
-        printf("[CLI] 서버 통신 기능은 추후 연결 예정입니다.\n");
+        printf("[CLI] 서버 통신 기능은 아직 연결되지 않았습니다.\n");
     }
 
     // 파일 복구
@@ -33,7 +76,21 @@ int cli_run(int argc, char *argv[])
         }
 
         printf("[CLI] 파일 복구 요청: %s\n", argv[2]);
-        printf("[CLI] 서버 통신 기능은 추후 연결 예정입니다.\n");
+
+        /*
+         * 현재 서버 통신 및 실제 복구 기능이 연결되지 않았으므로
+         * 복구와 해시 검증은 수행하지 않은 상태로 표시한다.
+         *
+         * 추후 서버에서 전달받은 실제 결과값으로 변경하면 된다.
+         */
+        RestoreResult result = {
+            .restore_status = RESTORE_NOT_EXECUTED,
+            .hash_status = HASH_NOT_CHECKED
+        };
+
+        cli_print_restore_result(&result);
+
+        printf("[CLI] 서버 통신 기능은 아직 연결되지 않았습니다.\n");
     }
 
     // 잘못된 명령어
@@ -45,3 +102,4 @@ int cli_run(int argc, char *argv[])
 
     return 0;
 }
+
