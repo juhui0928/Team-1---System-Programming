@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define QUEUE_SIZE 64
-#define MAX_FILENAME 256
+#define MAX_FILENAME 4096
 
 // 큐에 저장할 작업 정보
 typedef struct {

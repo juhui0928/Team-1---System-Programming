@@ -37,7 +37,8 @@ int queue_push(WorkQueue *queue,
                const char *filename,
                uint32_t event_mask)
 {
-    if (queue == NULL || filename == NULL)
+    if (queue == NULL || filename == NULL ||
+        strlen(filename) >= MAX_FILENAME)
         return -1;
 
     pthread_mutex_lock(&queue->mutex);
